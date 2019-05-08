@@ -40,6 +40,8 @@
 #include <sys/time.h>
 #include <sched.h>
 #include <stdbool.h>
+#include <sys/sysinfo.h>
+#include <sys/types.h>
 
 
 /* Used as prefix for error and warning messages. */
@@ -69,24 +71,23 @@ static void usage_err(void)
 }
 
 
+#  define relax()  sched_yield()
+
 #ifdef __GNUC__
 # define atomic_inc(ptr)   __sync_add_and_fetch((ptr), 1)
 # if defined(__x86_64__)
-#  define relax()          __asm__ __volatile__("pause" ::: "memory") 
 static inline void frc(uint64_t* pval)
 {
   uint32_t low, high;
-  __asm__ __volatile__("rdtsc" : "=a" (low) , "=d" (high));	 	
+  __asm__ __volatile__("rdtsc" : "=a" (low) , "=d" (high));
   *pval = ((uint64_t) high << 32) | low;
 }
 # elif defined(__i386__)
-#  define relax()          __asm__ __volatile__("pause" ::: "memory") 
 static inline void frc(uint64_t* pval)
 {
   __asm__ __volatile__("rdtsc" : "=A" (*pval));
 }
 # elif defined(__PPC64__)
-#  define relax()          do{}while(0)
 static inline void frc(uint64_t* pval)
 {
   __asm__ __volatile__("mfspr %0, 268\n" : "=r" (*pval));
@@ -302,9 +303,6 @@ static void* thread_main(void* arg)
 
   t->cpu_mhz = measure_cpu_mhz();
 
-  /* Last thread to get here starts the timer. */
-  if( atomic_inc(&g.n_threads_ready) == g.n_threads )
-    alarm(g.runtime_secs);
   /* Ensure we all start at the same time. */
   atomic_inc(&g.n_threads_running);
   while( g.n_threads_running != g.n_threads )
@@ -560,6 +558,8 @@ static void run_expt(struct thread* threads, int runtime_secs)
   gettimeofday(&g.tv_start, NULL);
   g.cmd = GO;
 
+  alarm(g.runtime_secs);
+
   /* Go to sleep until the threads have done their stuff. */
   for( i = 0; i < g.n_threads; ++i )
     pthread_join(threads[i].thread_id, NULL);
@@ -595,23 +595,12 @@ static void calc_max_interruptions(struct thread* threads, int runtime)
   }
 
   /* If getting a low number of interruptions per second then variance may be
-   * quite high.  So 
+   * quite high.  So
    */
   per_sec = max / g.runtime_secs;
   if( per_sec < 1000 )
     per_sec = 1000;
   g.max_interruptions = per_sec * 2 * runtime;
-}
-
-
-static void move_to_root_cpuset(void)
-{
-  /* Move this process to the root cpuset.  Should have no effect on
-   * systems that don't have cpusets.
-   */
-  char cmd[80];
-  sprintf(cmd, "{ echo %d >/cpusets/tasks; } 2>/dev/null", (int) getpid());
-  system(cmd);
 }
 
 
@@ -660,7 +649,7 @@ int main(int argc, char* argv[])
   const char* raw_prefix = NULL;
   const char* cores_opt = NULL;
   char dummy;
-  int i, n_cores, runtime = 70;
+  int n_cores, runtime = 70;
   int* cores;
 
   g.max_interruptions = 1000000;
@@ -709,11 +698,12 @@ int main(int argc, char* argv[])
       sscanf(argv[0], "%u%c", &g.threshold_nsec, &dummy) != 1 )
     usage_err();
 
+  int nprocs = get_nprocs_conf();
+  cpu_set_t cpus;
+  sched_getaffinity(getpid(), sizeof cpus, &cpus);
+
   if( cores_opt == NULL ) {
-    n_cores = sysconf(_SC_NPROCESSORS_CONF);
-    TEST( cores = malloc(n_cores * sizeof(cores[0])) );
-    for( i = 0; i < n_cores; ++i )
-      cores[i] = i;
+    n_cores = CPU_COUNT(&cpus);
   }
   else {
     if( ! parse_comma_sep_ranges(cores_opt, &cores, &n_cores) ) {
@@ -723,15 +713,25 @@ int main(int argc, char* argv[])
   }
 
   /* Check which cores we can use by trying to set affinity to each. */
-  move_to_root_cpuset();
   TEST( threads = malloc(n_cores * sizeof(threads[0])) );
-  for( i = 0; i < n_cores; ++i )
-    if( move_to_core(cores[i]) == 0 )
-      threads[g.n_threads++].core_i = cores[i];
-    else
-      fprintf(stderr, "%s: WARNING: unable to use core %d\n",
-              APP_NAME, cores[i]);
+  g.n_threads = n_cores;
 
+  int cur_proc = 0;
+  for (int i = 0; i != n_cores; ++i, ++cur_proc)
+  {
+    while (!CPU_ISSET(cur_proc, &cpus) && cur_proc != nprocs)
+        ++cur_proc;
+
+    if (cur_proc != nprocs)
+      threads[i].core_i = cur_proc;
+    else
+    {
+      puts("error: reached nprocs limit");
+      exit(1);
+    }
+  }
+
+  move_to_core(0);  // put the main thread on core 0
   signal(SIGALRM, handle_alarm);
 
   run_expt(threads, 1);
