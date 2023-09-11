@@ -1,1 +1,11 @@
 sysjitter
+
+# ctags
+GPATH
+GRTAGS
+GTAGS
+ID
+
+# vim
+.*swo
+.*swp
