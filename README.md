@@ -1,4 +1,13 @@
-sysjitter v1.4
+**Note**: this is a fork of https://github.com/Xilinx-CNS/cns-sysjitter.  I made it for two reasons:
+
+* the original code wasn't available on github at the time (it was disbributed as a tarball),
+* I made some changes to make it work with `taskset` (which unintentionally broke the `--cores` option).
+
+The original readme follows:
+
+---
+
+# sysjitter v1.4
 
  Copyright 2010-2017 David Riddoch <david@riddoch.org.uk>
 
@@ -8,7 +17,6 @@ sysjitter v1.4
  of the run it outputs some summary statistics for each core, and
  optionally the full raw data.
 
-
 Prerequisites
 -------------
 
@@ -16,12 +24,10 @@ Prerequisites
 
 - Requires a version of gcc with support for built-in atomics.
 
-
 Building
 --------
 
-  make
-
+    make
 
 Running
 -------
