@@ -92,6 +92,11 @@ static inline void frc(uint64_t* pval)
 {
   __asm__ __volatile__("mfspr %0, 268\n" : "=r" (*pval));
 }
+# elif defined(__aarch64__)
+static inline void frc(uint64_t* pval)
+{
+  __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(*pval));
+}
 # else
 #  error Need frc() for this platform.
 # endif
